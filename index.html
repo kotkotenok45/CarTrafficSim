@@ -2,84 +2,157 @@
 <html lang="ru">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Smart Traffic AI</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <title>Smart Traffic AI: Night City</title>
     <link rel="manifest" href="manifest.json">
     <meta name="theme-color" content="#1a1a1a">
     <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <style>
-        body { margin: 0; background: #1a1a1a; display: flex; justify-content: center; align-items: center; height: 100vh; overflow: hidden; font-family: sans-serif; touch-action: none; }
-        canvas { background: #222; max-width: 100%; max-height: 100%; object-fit: contain; box-shadow: 0 0 20px rgba(0,0,0,0.5); }
-        #ui { position: absolute; top: 20px; left: 20px; color: #eee; pointer-events: none; }
+        body { margin: 0; background: #0a0a0a; display: flex; justify-content: center; align-items: center; height: 100vh; width: 100vw; overflow: hidden; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; touch-action: none; -webkit-tap-highlight-color: transparent; }
+        canvas { background: #111; max-width: 100%; max-height: 100%; object-fit: contain; box-shadow: 0 0 40px rgba(255,180,100,0.1); }
+        #ui { position: absolute; top: 30px; left: 30px; color: #eee; pointer-events: none; text-shadow: 1px 1px 4px rgba(0,0,0,0.8); }
+        h1 { margin: 0; font-size: 1.4rem; font-weight: 700; letter-spacing: -1px; }
+        p { margin: 5px 0; font-size: 0.9rem; opacity: 0.8; }
     </style>
 </head>
 <body>
-    <div id="ui"><h1>Traffic AI</h1><p>Night Mode | Smart Yield</p></div>
+    <div id="ui"><h1>Traffic AI</h1><p>Night City | Enhanced AI | Warm Lighting</p></div>
     <canvas id="simCanvas"></canvas>
 
     <script>
-        // Регистрация SW
+        // Регистрация SW (не требует изменений)
         if ('serviceWorker' in navigator) {
-            navigator.serviceWorker.register('sw.js').catch(console.error);
+            navigator.serviceWorker.register('sw.js').catch(() => {});
         }
 
         const canvas = document.getElementById('simCanvas');
         const ctx = canvas.getContext('2d');
         canvas.width = 800; canvas.height = 800;
 
-        const CAR_WIDTH = 20, CAR_LENGTH = 40, MAX_SPEED = 3.5, ACCEL = 0.1, BRAKE_FORCE = 0.2, SENSOR = 80;
+        // Константы симуляции (Улучшено)
+        const CAR_WIDTH = 22, CAR_LENGTH = 44, MAX_SPEED = 3.8, ACCEL = 0.12, BRAKE_FORCE = 0.25;
+        const SENSOR_DIST = 90; // Дальность обнаружения для ИИ (важно для фикса)
+        const SPAWN_CHANCE = 0.06; // БОЛЬШЕ ТРАФИКА (в 3 раза больше)
+
         let cars = [], explosions = [];
 
         class Car {
             constructor(lane) {
                 this.lane = lane;
-                this.color = `hsl(${Math.random() * 360}, 70%, 60%)`;
-                this.speed = 2.5 + Math.random();
+                this.color = `hsl(${Math.random() * 360}, 60%, 55%)`;
+                this.speed = 2.8 + Math.random();
+                this.targetSpeed = this.speed;
                 this.braking = false;
                 this.crashed = false;
-                const laneW = 60;
-                if(lane==0){this.x=370; this.y=-50; this.angle=Math.PI/2}
-                if(lane==1){this.x=850; this.y=370; this.angle=Math.PI}
-                if(lane==2){this.x=430; this.y=850; this.angle=-Math.PI/2}
-                if(lane==3){this.x=-50; this.y=430; this.angle=0}
+                if(lane==0){this.x=370; this.y=-60; this.angle=Math.PI/2; this.sensorW=0.6;} // Сверху вниз (задержка на спавн)
+                if(lane==1){this.x=860; this.y=370; this.angle=Math.PI; this.sensorW=0.6;} // Справа налево
+                if(lane==2){this.x=430; this.y=860; this.angle=-Math.PI/2; this.sensorW=0.6;} // Снизу вверх
+                if(lane==3){this.x=-60; this.y=430; this.angle=0; this.sensorW=0.6;} // Слева направо
             }
             update(all) {
                 if(this.crashed) return;
-                let obstacle = false;
+                
+                let min_d = Infinity;
+                let obstacle = null;
+
+                // Улучшенная логика обнаружения для фикса багов
                 all.forEach(other => {
                     if(other === this || other.crashed) return;
-                    const d = Math.hypot(other.x-this.x, other.y-this.y);
-                    const dot = ((other.x-this.x)*Math.cos(this.angle)+(other.y-this.y)*Math.sin(this.angle))/d;
-                    if(d < SENSOR && dot > 0.7) obstacle = true;
+                    const dx = other.x - this.x;
+                    const dy = other.y - this.y;
+                    const d = Math.hypot(dx, dy);
+
+                    // Учитываем только машины впереди (более широкий угол)
+                    const dot = (dx*Math.cos(this.angle)+(dy*Math.sin(this.angle)))/d;
+                    if(d < SENSOR_DIST && dot > 0.6) {
+                        if(d < min_d) {
+                            min_d = d;
+                            obstacle = other;
+                        }
+                    }
                 });
-                if(obstacle){ this.speed = Math.max(0, this.speed-BRAKE_FORCE); this.braking = true; }
-                else { this.speed = Math.min(MAX_SPEED, this.speed+ACCEL); this.braking = false; }
-                this.x += Math.cos(this.angle)*this.speed; this.y += Math.sin(this.angle)*this.speed;
+
+                // Плавное торможение (для фикса багов)
+                if(obstacle) {
+                    const obstacle_d = Math.hypot(obstacle.x-this.x, obstacle.y-this.y);
+                    this.braking = true;
+                    // Если очень близко - экстренное торможение
+                    if (obstacle_d < SENSOR_DIST/2) {
+                        this.speed = Math.max(0, this.speed - BRAKE_FORCE * 1.5);
+                    } else {
+                        this.speed = Math.max(0.5, this.speed - BRAKE_FORCE * 0.8);
+                    }
+                } else {
+                    this.speed = Math.min(MAX_SPEED, this.speed + ACCEL);
+                    this.braking = false;
+                }
+
+                // Обновление позиции
+                this.x += Math.cos(this.angle)*this.speed;
+                this.y += Math.sin(this.angle)*this.speed;
+
+                // Проверка столкновений
                 all.forEach(other => {
-                    if(other!==this && Math.hypot(this.x-other.x, this.y-other.y) < 25) {
+                    if(other!==this && Math.hypot(this.x-other.x, this.y-other.y) < 26) {
                         this.crashed = other.crashed = true;
-                        explosions.push({x:this.x, y:this.y, life:30});
+                        this.speed = other.speed = 0;
+                        explosions.push({x:this.x, y:this.y, life:35});
                     }
                 });
             }
             draw() {
                 ctx.save(); ctx.translate(this.x, this.y); ctx.rotate(this.angle);
-                const g = ctx.createLinearGradient(20,0,80,0);
-                g.addColorStop(0,'rgba(255,255,200,0.3)'); g.addColorStop(1,'transparent');
-                ctx.fillStyle=g; ctx.beginPath(); ctx.moveTo(20,0); ctx.lineTo(90,-30); ctx.lineTo(90,30); ctx.fill();
-                ctx.fillStyle=this.color; ctx.fillRect(-20,-10,40,20);
-                ctx.fillStyle=this.braking?'#f00':'#500'; ctx.fillRect(-20,-10,3,6); ctx.fillRect(-20,4,3,6);
+                
+                // Свет фар
+                const g = ctx.createLinearGradient(22,0,90,0);
+                g.addColorStop(0,'rgba(255,255,210,0.4)'); g.addColorStop(1,'transparent');
+                ctx.fillStyle=g; ctx.beginPath(); ctx.moveTo(22,-6); ctx.lineTo(110,-40); ctx.lineTo(110,40); ctx.lineTo(22,6); ctx.fill();
+                
+                // Корпус
+                ctx.fillStyle=this.color; ctx.fillRect(-22,-11,44,22);
+                ctx.fillStyle='rgba(0,0,0,0.3)'; ctx.fillRect(-5,-11,10,22); // Крыша
+                
+                // Стоп-сигналы
+                ctx.fillStyle=this.braking?'#ff2200':'#660000'; ctx.fillRect(-22,-11,3,6); ctx.fillRect(-22,5,3,6);
+                if(this.braking) { ctx.shadowBlur=12; ctx.shadowColor='#f00'; ctx.fillRect(-22,-11,1,22); }
+                
                 ctx.restore();
             }
         }
 
+        // Рисование сцены и ОСВЕЩЕНИЯ (НОВОЕ)
+        function drawScene() {
+            ctx.fillStyle='#0f0f0f'; ctx.fillRect(0,0,800,800);
+            
+            // Дороги
+            ctx.fillStyle='#1e1e1e'; ctx.fillRect(330,0,140,800); ctx.fillRect(0,330,800,140);
+            
+            // Разметка (тусклая)
+            ctx.strokeStyle='#333'; ctx.lineWidth=1; ctx.setLineDash([15, 15]);
+            ctx.beginPath(); ctx.moveTo(400,0); ctx.lineTo(400,800); ctx.moveTo(0,400); ctx.lineTo(800,400); ctx.stroke();
+            ctx.setLineDash([]); ctx.lineWidth=1;
+            
+            // НОВОЕ: Уличное освещение (Уличные фонари по углам)
+            const lights = [ [310, 310], [490, 310], [310, 490], [490, 490] ];
+            lights.forEach(pos => {
+                ctx.fillStyle = 'rgba(255, 200, 100, 0.04)'; // Теплый свет (тусклый)
+                ctx.beginPath(); ctx.arc(pos[0], pos[1], 160, 0, Math.PI*2); ctx.fill();
+                ctx.fillStyle = 'rgba(255, 200, 100, 0.1)'; // Ядро света
+                ctx.beginPath(); ctx.arc(pos[0], pos[1], 50, 0, Math.PI*2); ctx.fill();
+                ctx.fillStyle = '#ffcc88'; // Сам фонарь
+                ctx.beginPath(); ctx.arc(pos[0], pos[1], 6, 0, Math.PI*2); ctx.fill();
+            });
+        }
+
         function loop() {
-            ctx.fillStyle='#222'; ctx.fillRect(0,0,800,800);
-            ctx.fillStyle='#333'; ctx.fillRect(340,0,120,800); ctx.fillRect(0,340,800,120);
-            if(Math.random()<0.02) cars.push(new Car(Math.floor(Math.random()*4)));
-            cars = cars.filter(c => c.x>-100 && c.x<900 && c.y>-100 && c.y<900);
+            if(Math.random()<SPAWN_CHANCE) cars.push(new Car(Math.floor(Math.random()*4)));
+            drawScene(); // Рисуем сцену и освещение ПЕРЕД машинами
+            
+            cars = cars.filter(c => c.x>-150 && c.x<950 && c.y>-150 && c.y<950);
             cars.forEach(c => { c.update(cars); c.draw(); });
-            explosions.forEach((e,i) => { ctx.font='30px Arial'; ctx.fillText('💥',e.x-15,e.y+10); if(--e.life<=0) explosions.splice(i,1); });
+            
+            explosions.forEach((e,i) => { ctx.font='35px Arial'; ctx.fillText('💥',e.x-18,e.y+12); if(--e.life<=0) explosions.splice(i,1); });
             requestAnimationFrame(loop);
         }
         loop();
