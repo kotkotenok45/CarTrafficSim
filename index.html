@@ -3,21 +3,23 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
-    <title>Smart City Sim</title>
+    <title>Smart City: Mobile Pro</title>
     <link rel="manifest" href="manifest.json">
     <meta name="theme-color" content="#111">
     <meta name="apple-mobile-web-app-capable" content="yes">
     <style>
-        body { margin: 0; background: #0a0a0a; color: white; overflow: hidden; font-family: sans-serif; touch-action: none; }
-        canvas { display: block; width: 100vw; height: 100vh; }
-        #ui { position: absolute; top: 20px; left: 20px; pointer-events: none; text-shadow: 1px 1px 2px black; z-index: 10; }
-        .controls { position: absolute; bottom: 20px; right: 20px; background: rgba(0,0,0,0.5); padding: 10px; border-radius: 10px; z-index: 10;}
+        body { margin: 0; background: #0a0a0a; color: white; overflow: hidden; font-family: sans-serif; touch-action: none; position: fixed; width: 100%; height: 100%; }
+        canvas { display: block; width: 100vw; height: 100vh; cursor: grab; }
+        canvas:active { cursor: grabbing; }
+        #ui { position: absolute; top: env(safe-area-inset-top, 20px); left: 20px; pointer-events: none; text-shadow: 1px 1px 3px black; z-index: 10; }
+        h1 { margin: 0; font-size: 1.2rem; }
+        p { margin: 5px 0; font-size: 0.8rem; opacity: 0.7; }
     </style>
 </head>
 <body>
     <div id="ui">
         <h1>Smart City AI</h1>
-        <p>Zoom: Pinch or Wheel | Smart Pedestrians</p>
+        <p>1 палец — двигать | 2 пальца — зум</p>
     </div>
     <canvas id="sim"></canvas>
 
@@ -26,7 +28,7 @@
         const ctx = canvas.getContext('2d');
         
         let width, height;
-        let scale = 0.8; // Начальный зум
+        let scale = 0.6;
         let offset = { x: 0, y: 0 };
         
         const ROAD_W = 160;
@@ -36,187 +38,147 @@
         function resize() {
             width = canvas.width = window.innerWidth;
             height = canvas.height = window.innerHeight;
-            offset.x = width / 2;
-            offset.y = height / 2;
+            if (offset.x === 0) {
+                offset.x = width / 2;
+                offset.y = height / 2;
+            }
         }
         window.addEventListener('resize', resize);
         resize();
 
-        // --- ЛОГИКА ЗУМА ---
-        window.addEventListener('wheel', e => {
-            const zoomSpeed = 0.001;
-            scale -= e.deltaY * zoomSpeed;
-            scale = Math.max(0.3, Math.min(2, scale));
-        });
-
+        // --- УПРАВЛЕНИЕ ДЛЯ ТЕЛЕФОНА (ИСПРАВЛЕНО) ---
+        let lastTouch = { x: 0, y: 0 };
         let initialDist = 0;
-        window.addEventListener('touchstart', e => {
-            if (e.touches.length === 2) {
+        let isDragging = false;
+
+        canvas.addEventListener('touchstart', e => {
+            e.preventDefault();
+            if (e.touches.length === 1) {
+                isDragging = true;
+                lastTouch.x = e.touches[0].pageX;
+                lastTouch.y = e.touches[0].pageY;
+            } else if (e.touches.length === 2) {
+                isDragging = false;
                 initialDist = Math.hypot(e.touches[0].pageX - e.touches[1].pageX, e.touches[0].pageY - e.touches[1].pageY);
             }
-        });
-        window.addEventListener('touchmove', e => {
-            if (e.touches.length === 2) {
+        }, { passive: false });
+
+        canvas.addEventListener('touchmove', e => {
+            e.preventDefault();
+            if (e.touches.length === 1 && isDragging) {
+                const dx = e.touches[0].pageX - lastTouch.x;
+                const dy = e.touches[0].pageY - lastTouch.y;
+                offset.x += dx;
+                offset.y += dy;
+                lastTouch.x = e.touches[0].pageX;
+                lastTouch.y = e.touches[0].pageY;
+            } else if (e.touches.length === 2) {
                 const dist = Math.hypot(e.touches[0].pageX - e.touches[1].pageX, e.touches[0].pageY - e.touches[1].pageY);
-                scale *= (dist / initialDist);
+                const zoomFactor = dist / initialDist;
+                scale = Math.max(0.2, Math.min(3, scale * zoomFactor));
                 initialDist = dist;
-                scale = Math.max(0.3, Math.min(2, scale));
             }
-        });
+        }, { passive: false });
+
+        canvas.addEventListener('touchend', () => { isDragging = false; });
+
+        // Мышка (для ПК)
+        canvas.addEventListener('wheel', e => {
+            e.preventDefault();
+            const zoomSpeed = 0.001;
+            scale = Math.max(0.2, Math.min(3, scale - e.deltaY * zoomSpeed));
+        }, { passive: false });
 
         class Pedestrian {
-            constructor() {
-                this.type = 'ped';
-                this.reset();
-            }
+            constructor() { this.reset(); }
             reset() {
-                // Спавнятся на тротуарах
-                const onSide = Math.random() > 0.5;
-                if(onSide) {
+                const side = Math.random() > 0.5;
+                if(side) {
                     this.x = (Math.random() > 0.5 ? -1 : 1) * (ROAD_W/2 + 30);
-                    this.y = (Math.random() - 0.5) * 1000;
-                    this.vx = 0; this.vy = (Math.random() - 0.5) * 2;
+                    this.y = (Math.random() - 0.5) * 2000;
+                    this.vx = 0; this.vy = (Math.random() - 0.5) * 1.5;
                 } else {
                     this.y = (Math.random() > 0.5 ? -1 : 1) * (ROAD_W/2 + 30);
-                    this.x = (Math.random() - 0.5) * 1000;
-                    this.vy = 0; this.vx = (Math.random() - 0.5) * 2;
+                    this.x = (Math.random() - 0.5) * 2000;
+                    this.vy = 0; this.vx = (Math.random() - 0.5) * 1.5;
                 }
-                this.color = '#fff';
             }
             update() {
-                this.x += this.vx;
-                this.y += this.vy;
-                if(Math.abs(this.x) > 1000 || Math.abs(this.y) > 1000) this.reset();
+                this.x += this.vx; this.y += this.vy;
+                if(Math.abs(this.x) > 1200 || Math.abs(this.y) > 1200) this.reset();
             }
             draw() {
-                ctx.fillStyle = this.color;
-                ctx.beginPath();
-                ctx.arc(this.x, this.y, 4, 0, Math.PI*2);
-                ctx.fill();
+                ctx.fillStyle = '#fff';
+                ctx.beginPath(); ctx.arc(this.x, this.y, 4, 0, 7); ctx.fill();
             }
         }
 
         class Car {
             constructor(lane) {
-                this.type = 'car';
-                this.lane = lane; // 0: Down, 1: Left, 2: Up, 3: Right
-                this.length = 40;
-                this.width = 20;
-                this.color = `hsl(${Math.random()*360}, 60%, 50%)`;
-                this.speed = 0;
-                this.maxSpeed = 3 + Math.random();
-                
+                this.lane = lane;
+                this.length = 44; this.width = 22;
+                this.color = `hsl(${Math.random()*360}, 65%, 55%)`;
+                this.speed = 0; this.maxSpeed = 3 + Math.random();
                 const off = 40;
-                if(lane==0){this.x = -off; this.y = -800; this.angle = Math.PI/2;}
-                if(lane==1){this.x = 800; this.y = -off; this.angle = Math.PI;}
-                if(lane==2){this.x = off; this.y = 800; this.angle = -Math.PI/2;}
-                if(lane==3){this.x = -800; this.y = off; this.angle = 0;}
+                if(lane==0){this.x=-off; this.y=-1000; this.angle=Math.PI/2;}
+                if(lane==1){this.x=1000; this.y=-off; this.angle=Math.PI;}
+                if(lane==2){this.x=off; this.y=1000; this.angle=-Math.PI/2;}
+                if(lane==3){this.x=-1000; this.y=off; this.angle=0;}
             }
             update() {
-                let safeDist = 100;
                 let blocked = false;
-
-                // Видит другие машины и пешеходов
                 entities.forEach(other => {
                     if(other === this) return;
                     const d = Math.hypot(other.x - this.x, other.y - this.y);
-                    const dx = other.x - this.x;
-                    const dy = other.y - this.y;
-                    const dot = (dx * Math.cos(this.angle) + dy * Math.sin(this.angle)) / d;
-
-                    if(d < safeDist && dot > 0.7) blocked = true;
+                    if (d < 100) {
+                        const dx = other.x - this.x, dy = other.y - this.y;
+                        const dot = (dx * Math.cos(this.angle) + dy * Math.sin(this.angle)) / d;
+                        if(dot > 0.7) blocked = true;
+                    }
                 });
-
-                if(blocked) {
-                    this.speed = Math.max(0, this.speed - 0.3);
-                } else {
-                    this.speed = Math.min(this.maxSpeed, this.speed + 0.1);
-                }
-
+                this.speed = blocked ? Math.max(0, this.speed - 0.3) : Math.min(this.maxSpeed, this.speed + 0.15);
                 this.x += Math.cos(this.angle) * this.speed;
                 this.y += Math.sin(this.angle) * this.speed;
-
-                if(Math.abs(this.x) > 1000 || Math.abs(this.y) > 1000) {
-                    const idx = entities.indexOf(this);
-                    entities.splice(idx, 1);
-                }
             }
             draw() {
-                ctx.save();
-                ctx.translate(this.x, this.y);
-                ctx.rotate(this.angle);
-                // Фары
-                ctx.fillStyle = 'rgba(255,255,200,0.2)';
-                ctx.beginPath(); ctx.moveTo(20,0); ctx.lineTo(80,-30); ctx.lineTo(80,30); ctx.fill();
-                // Тело
-                ctx.fillStyle = this.color;
-                ctx.fillRect(-this.length/2, -this.width/2, this.length, this.width);
-                // Стоп-сигналы
-                if(this.speed < 1) {
-                    ctx.fillStyle = 'red';
-                    ctx.fillRect(-this.length/2, -this.width/2, 2, 5);
-                    ctx.fillRect(-this.length/2, this.width/2 - 5, 2, 5);
-                }
+                ctx.save(); ctx.translate(this.x, this.y); ctx.rotate(this.angle);
+                ctx.fillStyle = 'rgba(255,255,200,0.15)';
+                ctx.beginPath(); ctx.moveTo(22,0); ctx.lineTo(80,-30); ctx.lineTo(80,30); ctx.fill();
+                ctx.fillStyle = this.color; ctx.fillRect(-22, -11, 44, 22);
                 ctx.restore();
             }
         }
 
         function drawMap() {
-            // Трава
-            ctx.fillStyle = '#112211';
-            ctx.fillRect(-2000, -2000, 4000, 4000);
-
-            // Дороги
-            ctx.fillStyle = '#222';
-            ctx.fillRect(-ROAD_W/2, -2000, ROAD_W, 4000);
-            ctx.fillRect(-2000, -ROAD_W/2, 4000, ROAD_W);
-
-            // Тротуары
-            ctx.fillStyle = '#333';
-            // Вертикальные
-            ctx.fillRect(-ROAD_W/2 - SIDEWALK_W, -2000, SIDEWALK_W, 4000);
-            ctx.fillRect(ROAD_W/2, -2000, SIDEWALK_W, 4000);
-            // Горизонтальные
-            ctx.fillRect(-2000, -ROAD_W/2 - SIDEWALK_W, 4000, SIDEWALK_W);
-            ctx.fillRect(-2000, ROAD_W/2, 4000, SIDEWALK_W);
-
-            // Зебры
-            ctx.fillStyle = '#555';
-            for(let i = -1; i <= 1; i+=2) {
+            ctx.fillStyle = '#0d1a0d'; ctx.fillRect(-2000, -2000, 4000, 4000);
+            ctx.fillStyle = '#1a1a1a'; ctx.fillRect(-ROAD_W/2, -2000, ROAD_W, 4000); ctx.fillRect(-2000, -ROAD_W/2, 4000, ROAD_W);
+            ctx.fillStyle = '#2a2a2a';
+            ctx.fillRect(-ROAD_W/2-SIDEWALK_W, -2000, SIDEWALK_W, 4000); ctx.fillRect(ROAD_W/2, -2000, SIDEWALK_W, 4000);
+            ctx.fillRect(-2000, -ROAD_W/2-SIDEWALK_W, 4000, SIDEWALK_W); ctx.fillRect(-2000, ROAD_W/2, 4000, SIDEWALK_W);
+            
+            ctx.fillStyle = '#333'; // Зебры
+            for(let i of [-1, 1]) {
                 for(let j = -3; j <= 3; j++) {
-                    ctx.fillRect(j*20 - 5, i*(ROAD_W/2 + 10), 10, 40); // гор
-                    ctx.fillRect(i*(ROAD_W/2 + 10), j*20 - 5, 40, 10); // верт
+                    ctx.fillRect(j*20-5, i*(ROAD_W/2+10), 10, 40);
+                    ctx.fillRect(i*(ROAD_W/2+10), j*20-5, 40, 10);
                 }
             }
-
-            // Разметка
-            ctx.strokeStyle = 'white';
-            ctx.setLineDash([20, 20]);
-            ctx.beginPath();
-            ctx.moveTo(0, -2000); ctx.lineTo(0, 2000);
-            ctx.moveTo(-2000, 0); ctx.lineTo(2000, 0);
-            ctx.stroke();
-            ctx.setLineDash([]);
         }
 
-        for(let i=0; i<30; i++) entities.push(new Pedestrian());
+        for(let i=0; i<40; i++) entities.push(new Pedestrian());
 
         function loop() {
-            ctx.setTransform(1, 0, 0, 1, 0, 0);
-            ctx.clearRect(0, 0, width, height);
-
+            ctx.setTransform(1,0,0,1,0,0);
+            ctx.fillStyle = '#000'; ctx.fillRect(0,0,width,height);
             ctx.translate(offset.x, offset.y);
             ctx.scale(scale, scale);
 
             drawMap();
-
-            if(Math.random() < 0.03) entities.push(new Car(Math.floor(Math.random()*4)));
-
-            entities.forEach(e => {
-                e.update();
-                e.draw();
-            });
-
+            if(Math.random() < 0.04 && entities.filter(e => e instanceof Car).length < 25) {
+                entities.push(new Car(Math.floor(Math.random()*4)));
+            }
+            entities = entities.filter(e => Math.abs(e.x) < 1200 && Math.abs(e.y) < 1200);
+            entities.forEach(e => { e.update(); e.draw(); });
             requestAnimationFrame(loop);
         }
         loop();
