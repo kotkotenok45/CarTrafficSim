@@ -3,188 +3,182 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
-    <title>Smart Traffic AI: Soft Light</title>
+    <title>Smart Traffic: Tow Truck Edition</title>
     <link rel="manifest" href="manifest.json">
     <meta name="theme-color" content="#1a1a1a">
     <meta name="apple-mobile-web-app-capable" content="yes">
-    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <style>
-        body { margin: 0; background: #070707; display: flex; justify-content: center; align-items: center; height: 100vh; width: 100vw; overflow: hidden; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; touch-action: none; -webkit-tap-highlight-color: transparent; }
-        canvas { background: #111; max-width: 100%; max-height: 100%; object-fit: contain; box-shadow: 0 0 50px rgba(255,180,100,0.15); }
-        #ui { position: absolute; top: 30px; left: 30px; color: #eee; pointer-events: none; text-shadow: 1px 1px 4px rgba(0,0,0,0.8); }
-        h1 { margin: 0; font-size: 1.4rem; font-weight: 700; letter-spacing: -1px; }
-        p { margin: 5px 0; font-size: 0.9rem; opacity: 0.8; }
+        body { margin: 0; background: #070707; display: flex; justify-content: center; align-items: center; height: 100vh; width: 100vw; overflow: hidden; font-family: sans-serif; touch-action: none; }
+        canvas { background: #111; max-width: 100%; max-height: 100%; object-fit: contain; }
+        #ui { position: absolute; top: 30px; left: 30px; color: #eee; pointer-events: none; text-shadow: 1px 1px 4px black; }
+        h1 { margin: 0; font-size: 1.2rem; }
     </style>
 </head>
 <body>
-    <div id="ui"><h1>Traffic AI</h1><p>Night City | Volumetric Light | Fixed Spawn</p></div>
+    <div id="ui"><h1>Traffic AI</h1><p>Tow Truck Service Active 🚨</p></div>
     <canvas id="simCanvas"></canvas>
 
     <script>
-        // Регистрация SW (не требует изменений)
-        if ('serviceWorker' in navigator) {
-            navigator.serviceWorker.register('sw.js').catch(() => {});
-        }
+        if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
 
         const canvas = document.getElementById('simCanvas');
         const ctx = canvas.getContext('2d');
         canvas.width = 800; canvas.height = 800;
 
-        // Константы симуляции (Улучшено)
-        const CAR_WIDTH = 22, CAR_LENGTH = 44, MAX_SPEED = 4.2, ACCEL = 0.15, BRAKE_FORCE = 0.35;
-        const SENSOR_DIST = 95; // Увеличен, чтобы лучше видеть издалека
-        const SPAWN_CHANCE = 0.04; // Оптимизировано, чтобы не забивать перекресток
-
-        // Границы, за которыми машина считается "на экране"
-        const VIEW_MARGIN = 60; // Расстояние от края холста до точки спавна
-
-        let cars = [], explosions = [];
+        const CAR_WIDTH = 22, CAR_LENGTH = 44, MAX_SPEED = 4.0, ACCEL = 0.12, BRAKE_FORCE = 0.3;
+        let cars = [], explosions = [], towTrucks = [];
 
         class Car {
-            constructor(lane) {
+            constructor(lane, isTow = false) {
                 this.lane = lane;
-                this.color = `hsl(${Math.random() * 360}, 60%, 55%)`;
-                this.speed = 3.2 + Math.random();
+                this.isTow = isTow;
+                this.color = isTow ? '#ffcc00' : `hsl(${Math.random() * 360}, 60%, 55%)`;
+                this.speed = isTow ? 5 : 3 + Math.random();
                 this.crashed = false;
                 this.braking = false;
+                this.target = null; // Для эвакуатора
                 
-                const roadW = 140; 
-                const centerOffset = 30; // Смещение от центральной линии в свою полосу
+                const off = 30;
+                // Эвакуатор может ехать по встречке (off инвертируется случайно)
+                const side = (isTow && Math.random() > 0.5) ? -off : off;
 
-                // Улучшенный спавн: Машины появляются ДАЛЬШЕ за границей видимости
-                // Чтобы была дистанция для торможения еще ДО въезда на холст.
-                if(lane==0){this.x=400-centerOffset; this.y=-200; this.angle=Math.PI/2;} // Сверху вниз
-                if(lane==1){this.x=1000; this.y=400-centerOffset; this.angle=Math.PI;} // Справа налево
-                if(lane==2){this.x=400+centerOffset; this.y=1000; this.angle=-Math.PI/2;} // Снизу вверх
-                if(lane==3){this.x=-200; this.y=400+centerOffset; this.angle=0;} // Слева направо
+                if(lane==0){this.x=400-side; this.y=-150; this.angle=Math.PI/2;}
+                if(lane==1){this.x=950; this.y=400-side; this.angle=Math.PI;}
+                if(lane==2){this.x=400+side; this.y=950; this.angle=-Math.PI/2;}
+                if(lane==3){this.x=-150; this.y=400+side; this.angle=0;}
             }
-            update(all) {
-                if(this.crashed) return;
-                
-                let min_d = Infinity;
-                let obstacle = null;
 
-                // Улучшенная логика обнаружения
-                all.forEach(other => {
-                    if(other === this || other.crashed) return;
-                    const dx = other.x - this.x;
-                    const dy = other.y - this.y;
-                    const d = Math.hypot(dx, dy);
+            update(allCars) {
+                if (this.crashed) return;
 
-                    // Учитываем только машины строго впереди в своей полосе
-                    const dot = (dx*Math.cos(this.angle)+(dy*Math.sin(this.angle)))/d;
-                    if(d < SENSOR_DIST && dot > 0.75) {
-                        if(d < min_d) {
-                            min_d = d;
-                            obstacle = other;
+                let stop = false;
+
+                // Обычные машины останавливаются перед ДТП или эвакуатором
+                if (!this.isTow) {
+                    allCars.concat(towTrucks).forEach(other => {
+                        if (other === this) return;
+                        const d = Math.hypot(other.x - this.x, other.y - this.y);
+                        const dx = other.x - this.x;
+                        const dy = other.y - this.y;
+                        const dot = (dx * Math.cos(this.angle) + dy * Math.sin(this.angle)) / d;
+
+                        // Видят аварию или эвакуатор впереди
+                        if (d < 120 && dot > 0.6 && (other.crashed || other.isTow)) {
+                            stop = true;
+                        } else if (d < 80 && dot > 0.8) { // Обычная дистанция
+                            stop = true;
                         }
-                    }
-                });
-
-                // Торможение при наличии препятствия
-                if(obstacle) {
-                    const obstacle_d = Math.hypot(obstacle.x-this.x, obstacle.y-this.y);
-                    this.braking = true;
-                    // Экстренное торможение если очень близко
-                    if (obstacle_d < SENSOR_DIST/2.5) {
-                        this.speed = Math.max(0, this.speed - BRAKE_FORCE * 1.5);
-                    } else {
-                        // Плавное если есть место
-                        this.speed = Math.max(0.5, this.speed - BRAKE_FORCE * 0.9);
-                    }
+                    });
                 } else {
-                    this.speed = Math.min(MAX_SPEED, this.speed + ACCEL);
+                    // Логика эвакуатора: едет к ближайшей аварии
+                    if (this.target) {
+                        const dToTarget = Math.hypot(this.target.x - this.x, this.target.y - this.y);
+                        if (dToTarget < 30) {
+                            this.speed = 0;
+                            setTimeout(() => {
+                                cars = cars.filter(c => !c.crashed);
+                                explosions = [];
+                                this.target = null;
+                            }, 2000);
+                        }
+                    } else {
+                        this.speed = 5; // Уезжает после работы
+                    }
+                }
+
+                if (stop) {
+                    this.speed = Math.max(0, this.speed - BRAKE_FORCE);
+                    this.braking = true;
+                } else {
+                    this.speed = Math.min(this.isTow ? 5 : MAX_SPEED, this.speed + ACCEL);
                     this.braking = false;
                 }
 
-                // Обновление позиции
-                this.x += Math.cos(this.angle)*this.speed;
-                this.y += Math.sin(this.angle)*this.speed;
+                this.x += Math.cos(this.angle) * this.speed;
+                this.y += Math.sin(this.angle) * this.speed;
 
-                // Проверка столкновений
-                all.forEach(other => {
-                    if(other!==this && Math.hypot(this.x-other.x, this.y-other.y) < 28) {
-                        this.crashed = other.crashed = true;
-                        this.speed = other.speed = 0;
-                        explosions.push({x:this.x, y:this.y, life:35});
-                    }
-                });
+                // Коллизии (только для обычных машин)
+                if (!this.isTow) {
+                    allCars.forEach(other => {
+                        if (other !== this && !other.isTow && Math.hypot(this.x - other.x, this.y - other.y) < 28) {
+                            if (!this.crashed) {
+                                this.crashed = true;
+                                other.crashed = true;
+                                explosions.push({x: this.x, y: this.y, life: 100});
+                                spawnTowTruck(this);
+                            }
+                        }
+                    });
+                }
             }
-            draw() {
-                // Не рисуем машину, пока она далеко за границей спавна
-                if (this.x < -CAR_LENGTH || this.x > canvas.width + CAR_LENGTH || 
-                    this.y < -CAR_LENGTH || this.y > canvas.height + CAR_LENGTH) return;
 
+            draw() {
                 ctx.save(); ctx.translate(this.x, this.y); ctx.rotate(this.angle);
                 
-                // Свет фар (тоже стал мягче)
-                const g = ctx.createLinearGradient(22,0,SENSOR_DIST,0);
-                g.addColorStop(0,'rgba(255,255,220,0.3)'); g.addColorStop(1,'transparent');
-                ctx.fillStyle=g; ctx.beginPath(); ctx.moveTo(22,-8); ctx.lineTo(115,-45); ctx.lineTo(115,45); ctx.lineTo(22,8); ctx.fill();
+                // Свет фар
+                const g = ctx.createLinearGradient(20,0,80,0);
+                g.addColorStop(0, this.isTow ? 'rgba(255,200,0,0.2)' : 'rgba(255,255,220,0.2)');
+                g.addColorStop(1, 'transparent');
+                ctx.fillStyle=g; ctx.beginPath(); ctx.moveTo(22,-10); ctx.lineTo(100,-40); ctx.lineTo(100,40); ctx.lineTo(22,10); ctx.fill();
+
+                // Тело
+                ctx.fillStyle = this.color;
+                ctx.fillRect(-22, -11, 44, 22);
                 
-                // Корпус
-                ctx.fillStyle=this.color; ctx.fillRect(-22,-11,44,22);
-                ctx.fillStyle='rgba(0,0,0,0.3)'; ctx.fillRect(-7,-11,14,22); // Крыша
-                
-                // Стоп-сигналы
-                ctx.fillStyle=this.braking?'#ff1100':'#660000'; ctx.fillRect(-22,-11,3,6); ctx.fillRect(-22,5,3,6);
-                if(this.braking) { ctx.shadowBlur=15; ctx.shadowColor='#f00'; ctx.fillRect(-22,-11,1,22); }
-                
+                // Мигалка эвакуатора
+                if (this.isTow) {
+                    ctx.fillStyle = (Math.floor(Date.now() / 200) % 2) ? '#ff6600' : '#331100';
+                    ctx.beginPath(); ctx.arc(0, 0, 5, 0, 7); ctx.fill();
+                    if (ctx.fillStyle === '#ff6600') {
+                        ctx.shadowBlur = 15; ctx.shadowColor = 'orange';
+                        ctx.strokeRect(-5, -5, 10, 10);
+                    }
+                }
+
                 ctx.restore();
             }
         }
 
-        // Улучшенное рисование сцены и ОСВЕЩЕНИЯ (НОВОЕ)
+        function spawnTowTruck(target) {
+            if (towTrucks.length > 0) return; // Один за раз
+            const t = new Car(Math.floor(Math.random()*4), true);
+            t.target = target;
+            towTrucks.push(t);
+        }
+
         function drawScene() {
-            ctx.fillStyle='#0f0f0f'; ctx.fillRect(0,0,800,800);
+            ctx.fillStyle = '#0f0f0f'; ctx.fillRect(0,0,800,800);
+            ctx.fillStyle = '#1c1c1c'; ctx.fillRect(330,0,140,800); ctx.fillRect(0,330,800,140);
             
-            // Дороги
-            ctx.fillStyle='#1c1c1c'; ctx.fillRect(330,0,140,800); ctx.fillRect(0,330,800,140);
-            
-            // Разметка (тусклая)
-            ctx.strokeStyle='#2a2a2a'; ctx.lineWidth=1; ctx.setLineDash([15, 15]);
-            ctx.beginPath(); ctx.moveTo(400,0); ctx.lineTo(400,800); ctx.moveTo(0,400); ctx.lineTo(800,400); ctx.stroke();
-            ctx.setLineDash([]); ctx.lineWidth=1;
-            
-            // НОВОЕ: "Рассеянное" уличное освещение (Уличные фонари по углам)
-            // Вместо жестких кругов используем слоистые градиенты для эффекта дымки
-            const lights = [ [310, 310], [490, 310], [310, 490], [490, 490] ];
-            lights.forEach(pos => {
-                // Основной рассеянный объемный свет (большой, очень тусклый)
-                const g_outer = ctx.createRadialGradient(pos[0], pos[1], 10, pos[0], pos[1], 190);
-                g_outer.addColorStop(0, 'rgba(255, 200, 100, 0.05)'); 
-                g_outer.addColorStop(1, 'transparent');
-                ctx.fillStyle = g_outer; ctx.beginPath(); ctx.arc(pos[0], pos[1], 190, 0, Math.PI*2); ctx.fill();
-
-                // Ядро теплого света (меньше, ярче)
-                const g_inner = ctx.createRadialGradient(pos[0], pos[1], 0, pos[0], pos[1], 70);
-                g_inner.addColorStop(0, 'rgba(255, 190, 110, 0.15)'); 
-                g_inner.addColorStop(1, 'transparent');
-                ctx.fillStyle = g_inner; ctx.beginPath(); ctx.arc(pos[0], pos[1], 70, 0, Math.PI*2); ctx.fill();
-
-                // Точка фонаря (очень яркая в центре)
-                ctx.fillStyle = '#ffe0aa'; 
-                ctx.beginPath(); ctx.arc(pos[0], pos[1], 5, 0, Math.PI*2); ctx.fill();
+            // Фонари
+            [[310,310],[490,310],[310,490],[490,490]].forEach(p => {
+                const g = ctx.createRadialGradient(p[0],p[1],0,p[0],p[1],150);
+                g.addColorStop(0,'rgba(255,200,100,0.1)'); g.addColorStop(1,'transparent');
+                ctx.fillStyle=g; ctx.beginPath(); ctx.arc(p[0],p[1],150,0,7); ctx.fill();
             });
         }
 
         function loop() {
-            // Уменьшенный шанс спавна для предотвращения забивания перекрестка
-            if(Math.random()<SPAWN_CHANCE) {
+            drawScene();
+            
+            if (Math.random() < 0.03 && !cars.some(c => c.crashed)) {
                 const lane = Math.floor(Math.random()*4);
-                // Проверка: не спавнить, если в этой полосе уже стоит машина в очереди
-                const isBlocked = cars.some(c => c.lane === lane && (c.x < 50 || c.x > 750 || c.y < 50 || c.y > 750));
-                if (!isBlocked) cars.push(new Car(lane));
+                cars.push(new Car(lane));
             }
-            
-            drawScene(); // Рисуем сцену и освещение ПЕРЕД машинами
-            
-            // Удаляем машины, которые уехали далеко за границы (ФИКС спавна)
-            cars = cars.filter(c => c.x>-250 && c.x<1050 && c.y>-250 && c.y<1050);
-            
-            cars.forEach(c => { c.update(cars); c.draw(); });
-            
-            explosions.forEach((e,i) => { ctx.font='35px Arial'; ctx.fillText('💥',e.x-18,e.y+12); if(--e.life<=0) explosions.splice(i,1); });
+
+            // Фильтрация уехавших
+            cars = cars.filter(c => c.x > -200 && c.x < 1000 && c.y > -200 && c.y < 1000);
+            towTrucks = towTrucks.filter(t => t.x > -250 && t.x < 1050 && t.y > -250 && t.y < 1050);
+
+            [...cars, ...towTrucks].forEach(c => {
+                c.update(cars);
+                c.draw();
+            });
+
+            explosions.forEach(e => {
+                ctx.font = '30px Arial'; ctx.fillText('💥', e.x-15, e.y+10);
+            });
+
             requestAnimationFrame(loop);
         }
         loop();
