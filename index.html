@@ -2,72 +2,138 @@
 <html lang="ru">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>City Sim PWA</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <title>Infinite Night Traffic PWA</title>
     <link rel="manifest" href="manifest.json">
+    <meta name="theme-color" content="#070707">
     <style>
-        body, html {
-            margin: 0;
-            padding: 0;
-            width: 100%;
-            height: 100%;
-            overflow: hidden;
-            background-color: #222;
-        }
-        canvas {
-            display: block;
-        }
-        #ui {
-            position: absolute;
-            top: 10px;
-            left: 10px;
-            color: white;
-            font-family: sans-serif;
-            pointer-events: none;
-            background: rgba(0,0,0,0.5);
-            padding: 10px;
-            border-radius: 5px;
-        }
+        body, html { margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden; background-color: #070707; font-family: sans-serif; }
+        canvas { display: block; touch-action: none; }
+        #ui { position: absolute; top: 20px; left: 20px; color: #eee; pointer-events: none; background: rgba(0,0,0,0.4); padding: 10px; border-radius: 8px; }
     </style>
 </head>
 <body>
 
     <div id="ui">
-        Используйте стрелки или тач для перемещения
+        <b>Infinite Traffic AI</b><br>
+        Тяни, чтобы осмотреть город
     </div>
-    <canvas id="cityCanvas"></canvas>
+    <canvas id="simCanvas"></canvas>
 
     <script>
-        const canvas = document.getElementById('cityCanvas');
+        const canvas = document.getElementById('simCanvas');
         const ctx = canvas.getContext('2d');
+
+        // Константы из твоего кода
+        const GRID_SIZE = 400; 
+        const CAR_WIDTH = 22, CAR_LENGTH = 44, MAX_SPEED = 4.2, ACCEL = 0.15, BRAKE_FORCE = 0.35;
+        const SENSOR_DIST = 95;
 
         let width, height;
         let camera = { x: 0, y: 0 };
-        const GRID_SIZE = 200; // Размер одного квартала
-
-        // Регистрация Service Worker (у вас он уже есть, просто подключаем)
-        if ('serviceWorker' in navigator) {
-            window.addEventListener('load', () => {
-                navigator.serviceWorker.register('/sw.js').catch(err => console.log('SW error:', err));
-            });
-        }
+        let cars = [];
 
         function resize() {
             width = canvas.width = window.innerWidth;
             height = canvas.height = window.innerHeight;
         }
-
         window.addEventListener('resize', resize);
         resize();
 
-        // Простая псевдослучайная функция для генерации города по координатам
+        // Простая хэш-функция для процедурности
         function seededRandom(x, y) {
             const seed = Math.sin(x * 12.9898 + y * 78.233) * 43758.5453;
             return seed - Math.floor(seed);
         }
 
-        function drawCity() {
-            ctx.fillStyle = '#333'; // Фон асфальта
+        class Car {
+            constructor(col, row, lane) {
+                this.col = col;
+                this.row = row;
+                this.lane = lane; // 0: вниз, 1: влево, 2: вверх, 3: вправо
+                this.color = `hsl(${seededRandom(col, row + lane) * 360}, 60%, 55%)`;
+                this.speed = 2 + seededRandom(col, row) * 2;
+                this.angle = [Math.PI/2, Math.PI, -Math.PI/2, 0][lane];
+                this.crashed = false;
+                this.braking = false;
+                
+                const offset = 30;
+                // Начальная позиция внутри квартала
+                this.localX = [200 - offset, 400, 200 + offset, 0][lane];
+                this.localY = [0, 200 - offset, 400, 200 + offset][lane];
+            }
+
+            update(all) {
+                if(this.crashed) return;
+
+                let min_d = Infinity;
+                let obstacle = null;
+
+                const globalX = this.col * GRID_SIZE + this.localX;
+                const globalY = this.row * GRID_SIZE + this.localY;
+
+                all.forEach(other => {
+                    if(other === this) return;
+                    const oX = other.col * GRID_SIZE + other.localX;
+                    const oY = other.row * GRID_SIZE + other.localY;
+                    
+                    const dx = oX - globalX;
+                    const dy = oY - globalY;
+                    const d = Math.hypot(dx, dy);
+
+                    const dot = (dx * Math.cos(this.angle) + (dy * Math.sin(this.angle))) / d;
+                    if(d < SENSOR_DIST && dot > 0.75) {
+                        if(d < min_d) { min_d = d; obstacle = other; }
+                    }
+                });
+
+                if(obstacle) {
+                    this.braking = true;
+                    this.speed = Math.max(0, this.speed - BRAKE_FORCE);
+                } else {
+                    this.speed = Math.min(MAX_SPEED, this.speed + ACCEL);
+                    this.braking = false;
+                }
+
+                this.localX += Math.cos(this.angle) * this.speed;
+                this.localY += Math.sin(this.angle) * this.speed;
+
+                // Переход между кварталами (бесконечность)
+                if(this.localX > GRID_SIZE) { this.localX = 0; this.col++; }
+                if(this.localX < 0) { this.localX = GRID_SIZE; this.col--; }
+                if(this.localY > GRID_SIZE) { this.localY = 0; this.row++; }
+                if(this.localY < 0) { this.localY = GRID_SIZE; this.row--; }
+            }
+
+            draw() {
+                const screenX = this.col * GRID_SIZE + this.localX - camera.x;
+                const screenY = this.row * GRID_SIZE + this.localY - camera.y;
+
+                if (screenX < -50 || screenX > width + 50 || screenY < -50 || screenY > height + 50) return;
+
+                ctx.save();
+                ctx.translate(screenX, screenY);
+                ctx.rotate(this.angle);
+                
+                // Свет фар
+                const g = ctx.createLinearGradient(22, 0, SENSOR_DIST, 0);
+                g.addColorStop(0, 'rgba(255,255,220,0.2)'); g.addColorStop(1, 'transparent');
+                ctx.fillStyle = g; ctx.beginPath(); ctx.moveTo(22,-8); ctx.lineTo(100,-35); ctx.lineTo(100,35); ctx.lineTo(22,8); ctx.fill();
+                
+                // Корпус
+                ctx.fillStyle = this.color; ctx.fillRect(-22, -11, 44, 22);
+                ctx.fillStyle = 'rgba(0,0,0,0.3)'; ctx.fillRect(-7, -11, 14, 22);
+                
+                // Стопы
+                ctx.fillStyle = this.braking ? '#ff1100' : '#660000';
+                ctx.fillRect(-22, -11, 3, 6); ctx.fillRect(-22, 5, 3, 6);
+                
+                ctx.restore();
+            }
+        }
+
+        function drawScene() {
+            ctx.fillStyle = '#0f0f0f';
             ctx.fillRect(0, 0, width, height);
 
             const startCol = Math.floor(camera.x / GRID_SIZE);
@@ -80,63 +146,70 @@
                     const x = col * GRID_SIZE - camera.x;
                     const y = row * GRID_SIZE - camera.y;
 
-                    // Рисуем дороги
-                    ctx.strokeStyle = '#444';
-                    ctx.lineWidth = 20;
-                    ctx.strokeRect(x, y, GRID_SIZE, GRID_SIZE);
+                    // Дороги
+                    ctx.fillStyle = '#1c1c1c';
+                    ctx.fillRect(x + 130, y, 140, GRID_SIZE); // Вертикальная
+                    ctx.fillRect(x, y + 130, GRID_SIZE, 140); // Горизонтальная
 
-                    // Генерируем здание в квартале
+                    // Здания
                     const rand = seededRandom(col, row);
-                    if (rand > 0.3) { // 70% шанс появления здания
-                        const padding = 40;
-                        const bWidth = GRID_SIZE - padding * 2;
-                        const bHeight = GRID_SIZE - padding * 2;
-                        
-                        // Цвет здания зависит от координат
-                        const hue = Math.floor(rand * 360);
-                        ctx.fillStyle = `hsl(${hue}, 30%, 40%)`;
-                        ctx.fillRect(x + padding, y + padding, bWidth, bHeight);
+                    if (rand > 0.3) {
+                        ctx.fillStyle = '#151515';
+                        ctx.fillRect(x + 20, y + 20, 100, 100);
+                        ctx.fillRect(x + 280, y + 280, 100, 100);
+                    }
 
-                        // Рисуем "окна"
-                        ctx.fillStyle = rand > 0.6 ? '#f1c40f' : '#2c3e50'; 
-                        for(let i=0; i<3; i++) {
-                            for(let j=0; j<3; j++) {
-                                ctx.fillRect(x + padding + 10 + i*15, y + padding + 10 + j*15, 8, 8);
-                            }
-                        }
+                    // Освещение фонарей (из твоего кода)
+                    const lights = [[270, 270], [130, 270], [270, 130], [130, 130]];
+                    lights.forEach(p => {
+                        const lx = x + p[0], ly = y + p[1];
+                        const g = ctx.createRadialGradient(lx, ly, 0, lx, ly, 100);
+                        g.addColorStop(0, 'rgba(255, 190, 110, 0.1)'); g.addColorStop(1, 'transparent');
+                        ctx.fillStyle = g; ctx.beginPath(); ctx.arc(lx, ly, 100, 0, Math.PI*2); ctx.fill();
+                        ctx.fillStyle = '#ffe0aa'; ctx.beginPath(); ctx.arc(lx, ly, 2, 0, Math.PI*2); ctx.fill();
+                    });
+
+                    // Спавн машин в новых кварталах
+                    const key = `${col},${row}`;
+                    if (Math.random() < 0.02 && cars.length < 100) {
+                        const lane = Math.floor(Math.random() * 4);
+                        cars.push(new Car(col, row, lane));
                     }
                 }
             }
         }
 
-        // Управление (Мышь/Тач)
-        let isDragging = false;
-        let lastX, lastY;
+        // Инпут
+        let isDragging = false, lastX, lastY;
+        const start = (x, y) => { isDragging = true; lastX = x; lastY = y; };
+        const move = (x, y) => { if(isDragging) { camera.x -= (x - lastX); camera.y -= (y - lastY); lastX = x; lastY = y; } };
+        
+        canvas.onmousedown = e => start(e.clientX, e.clientY);
+        window.onmousemove = e => move(e.clientX, e.clientY);
+        window.onmouseup = () => isDragging = false;
+        canvas.ontouchstart = e => start(e.touches[0].clientX, e.touches[0].clientY);
+        canvas.ontouchmove = e => move(e.touches[0].clientX, e.touches[0].clientY);
+        canvas.ontouchend = () => isDragging = false;
 
-        const startMove = (x, y) => { isDragging = true; lastX = x; lastY = y; };
-        const doMove = (x, y) => {
-            if (!isDragging) return;
-            camera.x -= (x - lastX);
-            camera.y -= (y - lastY);
-            lastX = x;
-            lastY = y;
-        };
-        const endMove = () => { isDragging = false; };
+        function loop() {
+            drawScene();
+            
+            // Удаляем машины, которые слишком далеко
+            cars = cars.filter(c => {
+                const gx = c.col * GRID_SIZE + c.localX;
+                const gy = c.row * GRID_SIZE + c.localY;
+                return Math.hypot(gx - (camera.x + width/2), gy - (camera.y + height/2)) < 2000;
+            });
 
-        canvas.addEventListener('mousedown', e => startMove(e.clientX, e.clientY));
-        window.addEventListener('mousemove', e => doMove(e.clientX, e.clientY));
-        window.addEventListener('mouseup', endMove);
-
-        canvas.addEventListener('touchstart', e => startMove(e.touches[0].clientX, e.touches[0].clientY));
-        canvas.addEventListener('touchmove', e => doMove(e.touches[0].clientX, e.touches[0].clientY));
-        canvas.addEventListener('touchend', endMove);
-
-        function update() {
-            drawCity();
-            requestAnimationFrame(update);
+            cars.forEach(c => { c.update(cars); c.draw(); });
+            requestAnimationFrame(loop);
         }
 
-        update();
+        if ('serviceWorker' in navigator) {
+            navigator.serviceWorker.register('sw.js').catch(() => {});
+        }
+        
+        loop();
     </script>
 </body>
 </html>
