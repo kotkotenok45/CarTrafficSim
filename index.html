@@ -38,6 +38,17 @@
         // Границы, за которыми машина считается "на экране"
         const VIEW_MARGIN = 60; // Расстояние от края холста до точки спавна
 
+        let deferredPrompt;
+window.addEventListener('beforeinstallprompt', (e) => {
+    e.preventDefault();
+    deferredPrompt = e;
+    
+    // Если пришли из магазина — сразу показываем окно!
+    if (new URLSearchParams(window.location.search).get('install') === 'true') {
+        if (deferredPrompt) deferredPrompt.prompt();
+    }
+});
+        
         let cars = [], explosions = [];
 
         class Car {
