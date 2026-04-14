@@ -3,206 +3,190 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
-    <title>Neon City Traffic</title>
+    <title>Smart Traffic AI: Soft Light</title>
+    <link rel="manifest" href="manifest.json">
+    <meta name="theme-color" content="#1a1a1a">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <style>
-        body, html { margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden; background-color: #0a0a0c; font-family: 'Segoe UI', sans-serif; }
-        canvas { display: block; touch-action: none; }
-        #ui { position: absolute; top: 20px; left: 20px; color: #00ffcc; pointer-events: none; background: rgba(10,10,15,0.8); padding: 15px; border-radius: 8px; border: 1px solid #00ffcc; box-shadow: 0 0 10px rgba(0,255,204,0.3); }
+        body { margin: 0; background: #070707; display: flex; justify-content: center; align-items: center; height: 100vh; width: 100vw; overflow: hidden; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; touch-action: none; -webkit-tap-highlight-color: transparent; }
+        canvas { background: #111; max-width: 100%; max-height: 100%; object-fit: contain; box-shadow: 0 0 50px rgba(255,180,100,0.15); }
+        #ui { position: absolute; top: 30px; left: 30px; color: #eee; pointer-events: none; text-shadow: 1px 1px 4px rgba(0,0,0,0.8); }
+        h1 { margin: 0; font-size: 1.4rem; font-weight: 700; letter-spacing: -1px; }
+        p { margin: 5px 0; font-size: 0.9rem; opacity: 0.8; }
     </style>
 </head>
 <body>
-    <div id="ui"><b>Neon City AI</b><br>Разметка, окна и умный разъезд</div>
+    <div id="ui"><h1>Traffic AI</h1><p>Night City | Volumetric Light | Fixed Spawn</p></div>
     <canvas id="simCanvas"></canvas>
 
     <script>
+        // Регистрация SW (не требует изменений)
+        if ('serviceWorker' in navigator) {
+            navigator.serviceWorker.register('sw.js').catch(() => {});
+        }
+
         const canvas = document.getElementById('simCanvas');
         const ctx = canvas.getContext('2d');
-        const GRID_SIZE = 400;
-        const CAR_W = 18, CAR_L = 38;
-        
-        let width, height, scale = 1.0, camera = { x: 0, y: 0 };
-        let cars = [];
+        canvas.width = 800; canvas.height = 800;
 
-        function resize() {
-            width = canvas.width = window.innerWidth;
-            height = canvas.height = window.innerHeight;
-        }
-        window.addEventListener('resize', resize);
-        resize();
+        // Константы симуляции (Улучшено)
+        const CAR_WIDTH = 22, CAR_LENGTH = 44, MAX_SPEED = 4.2, ACCEL = 0.15, BRAKE_FORCE = 0.35;
+        const SENSOR_DIST = 95; // Увеличен, чтобы лучше видеть издалека
+        const SPAWN_CHANCE = 0.04; // Оптимизировано, чтобы не забивать перекресток
 
-        function sRand(x, y) {
-            const s = Math.sin(x * 12.9898 + y * 78.233) * 43758.5453;
-            return s - Math.floor(s);
-        }
+        // Границы, за которыми машина считается "на экране"
+        const VIEW_MARGIN = 60; // Расстояние от края холста до точки спавна
+
+        let cars = [], explosions = [];
 
         class Car {
-            constructor(c, r, lane) {
-                this.c = c; this.r = r; this.lane = lane;
-                // Яркие неоновые цвета
-                this.color = `hsl(${sRand(c, r + lane) * 360}, 80%, 60%)`;
-                this.speed = 1.5 + sRand(c, r) * 2;
-                this.angle = [Math.PI/2, Math.PI, -Math.PI/2, 0][lane];
+            constructor(lane) {
+                this.lane = lane;
+                this.color = `hsl(${Math.random() * 360}, 60%, 55%)`;
+                this.speed = 3.2 + Math.random();
+                this.crashed = false;
                 this.braking = false;
-                const off = 35;
-                this.lx = [200-off, 400, 200+off, 0][lane];
-                this.ly = [0, 200-off, 400, 200+off][lane];
-            }
-
-            getGX() { return this.c * GRID_SIZE + this.lx; }
-            getGY() { return this.r * GRID_SIZE + this.ly; }
-
-            update(all) {
-                let dMin = Infinity;
-                const gx = this.getGX(), gy = this.getGY();
                 
-                all.forEach(o => {
-                    if(o === this) return;
-                    const dx = o.getGX() - gx, dy = o.getGY() - gy;
-                    const d = Math.hypot(dx, dy);
-                    
-                    if (d < 150) {
-                        const angleToOther = Math.atan2(dy, dx);
-                        let diff = angleToOther - this.angle;
-                        while (diff < -Math.PI) diff += Math.PI * 2;
-                        while (diff > Math.PI) diff -= Math.PI * 2;
+                const roadW = 140; 
+                const centerOffset = 30; // Смещение от центральной линии в свою полосу
 
-                        if (Math.abs(diff) < Math.PI * 0.6) { // Зрение 215 градусов
-                            if (d < dMin) dMin = d;
+                // Улучшенный спавн: Машины появляются ДАЛЬШЕ за границей видимости
+                // Чтобы была дистанция для торможения еще ДО въезда на холст.
+                if(lane==0){this.x=400-centerOffset; this.y=-200; this.angle=Math.PI/2;} // Сверху вниз
+                if(lane==1){this.x=1000; this.y=400-centerOffset; this.angle=Math.PI;} // Справа налево
+                if(lane==2){this.x=400+centerOffset; this.y=1000; this.angle=-Math.PI/2;} // Снизу вверх
+                if(lane==3){this.x=-200; this.y=400+centerOffset; this.angle=0;} // Слева направо
+            }
+            update(all) {
+                if(this.crashed) return;
+                
+                let min_d = Infinity;
+                let obstacle = null;
+
+                // Улучшенная логика обнаружения
+                all.forEach(other => {
+                    if(other === this || other.crashed) return;
+                    const dx = other.x - this.x;
+                    const dy = other.y - this.y;
+                    const d = Math.hypot(dx, dy);
+
+                    // Учитываем только машины строго впереди в своей полосе
+                    const dot = (dx*Math.cos(this.angle)+(dy*Math.sin(this.angle)))/d;
+                    if(d < SENSOR_DIST && dot > 0.75) {
+                        if(d < min_d) {
+                            min_d = d;
+                            obstacle = other;
                         }
                     }
                 });
 
-                // Более жесткое торможение для предотвращения коллизий
-                if (dMin < 55) {
+                // Торможение при наличии препятствия
+                if(obstacle) {
+                    const obstacle_d = Math.hypot(obstacle.x-this.x, obstacle.y-this.y);
                     this.braking = true;
-                    this.speed = 0; // Полная остановка
-                } else if (dMin < 120) {
-                    this.braking = true;
-                    this.speed = Math.max(0.5, this.speed - 0.3);
+                    // Экстренное торможение если очень близко
+                    if (obstacle_d < SENSOR_DIST/2.5) {
+                        this.speed = Math.max(0, this.speed - BRAKE_FORCE * 1.5);
+                    } else {
+                        // Плавное если есть место
+                        this.speed = Math.max(0.5, this.speed - BRAKE_FORCE * 0.9);
+                    }
                 } else {
+                    this.speed = Math.min(MAX_SPEED, this.speed + ACCEL);
                     this.braking = false;
-                    this.speed = Math.min(3.5, this.speed + 0.1);
                 }
 
-                this.lx += Math.cos(this.angle) * this.speed;
-                this.ly += Math.sin(this.angle) * this.speed;
+                // Обновление позиции
+                this.x += Math.cos(this.angle)*this.speed;
+                this.y += Math.sin(this.angle)*this.speed;
 
-                if(this.lx >= GRID_SIZE) { this.lx = 0; this.c++; }
-                if(this.lx < 0) { this.lx = GRID_SIZE; this.c--; }
-                if(this.ly >= GRID_SIZE) { this.ly = 0; this.r++; }
-                if(this.ly < 0) { this.ly = GRID_SIZE; this.r--; }
+                // Проверка столкновений
+                all.forEach(other => {
+                    if(other!==this && Math.hypot(this.x-other.x, this.y-other.y) < 28) {
+                        this.crashed = other.crashed = true;
+                        this.speed = other.speed = 0;
+                        explosions.push({x:this.x, y:this.y, life:35});
+                    }
+                });
             }
-
             draw() {
-                const sx = (this.getGX() - camera.x) * scale;
-                const sy = (this.getGY() - camera.y) * scale;
-                if (sx < -100 || sx > width + 100 || sy < -100 || sy > height + 100) return;
+                // Не рисуем машину, пока она далеко за границей спавна
+                if (this.x < -CAR_LENGTH || this.x > canvas.width + CAR_LENGTH || 
+                    this.y < -CAR_LENGTH || this.y > canvas.height + CAR_LENGTH) return;
 
-                ctx.save();
-                ctx.translate(sx, sy);
-                ctx.rotate(this.angle);
-
-                // Свет фар
-                const g = ctx.createLinearGradient(10*scale, 0, 100*scale, 0);
-                g.addColorStop(0, 'rgba(0, 255, 255, 0.3)');
-                g.addColorStop(1, 'transparent');
-                ctx.fillStyle = g;
-                ctx.beginPath();
-                ctx.moveTo(10*scale, -8*scale); ctx.lineTo(100*scale, -35*scale);
-                ctx.lineTo(100*scale, 35*scale); ctx.lineTo(10*scale, 8*scale);
-                ctx.fill();
-
-                // Корпус
-                ctx.fillStyle = this.color;
-                ctx.shadowBlur = 5 * scale; ctx.shadowColor = this.color;
-                ctx.fillRect(-CAR_L/2*scale, -CAR_W/2*scale, CAR_L*scale, CAR_W*scale);
+                ctx.save(); ctx.translate(this.x, this.y); ctx.rotate(this.angle);
                 
-                // Стопы
-                if(this.braking) {
-                    ctx.fillStyle = '#ff0055';
-                    ctx.shadowBlur = 15 * scale; ctx.shadowColor = '#ff0055';
-                    ctx.fillRect(-CAR_L/2*scale, -CAR_W/2*scale, 4*scale, CAR_W*scale);
-                }
+                // Свет фар (тоже стал мягче)
+                const g = ctx.createLinearGradient(22,0,SENSOR_DIST,0);
+                g.addColorStop(0,'rgba(255,255,220,0.3)'); g.addColorStop(1,'transparent');
+                ctx.fillStyle=g; ctx.beginPath(); ctx.moveTo(22,-8); ctx.lineTo(115,-45); ctx.lineTo(115,45); ctx.lineTo(22,8); ctx.fill();
+                
+                // Корпус
+                ctx.fillStyle=this.color; ctx.fillRect(-22,-11,44,22);
+                ctx.fillStyle='rgba(0,0,0,0.3)'; ctx.fillRect(-7,-11,14,22); // Крыша
+                
+                // Стоп-сигналы
+                ctx.fillStyle=this.braking?'#ff1100':'#660000'; ctx.fillRect(-22,-11,3,6); ctx.fillRect(-22,5,3,6);
+                if(this.braking) { ctx.shadowBlur=15; ctx.shadowColor='#f00'; ctx.fillRect(-22,-11,1,22); }
+                
                 ctx.restore();
             }
         }
 
-        function loop() {
-            ctx.fillStyle = '#08080a';
-            ctx.fillRect(0, 0, width, height);
+        // Улучшенное рисование сцены и ОСВЕЩЕНИЯ (НОВОЕ)
+        function drawScene() {
+            ctx.fillStyle='#0f0f0f'; ctx.fillRect(0,0,800,800);
+            
+            // Дороги
+            ctx.fillStyle='#1c1c1c'; ctx.fillRect(330,0,140,800); ctx.fillRect(0,330,800,140);
+            
+            // Разметка (тусклая)
+            ctx.strokeStyle='#2a2a2a'; ctx.lineWidth=1; ctx.setLineDash([15, 15]);
+            ctx.beginPath(); ctx.moveTo(400,0); ctx.lineTo(400,800); ctx.moveTo(0,400); ctx.lineTo(800,400); ctx.stroke();
+            ctx.setLineDash([]); ctx.lineWidth=1;
+            
+            // НОВОЕ: "Рассеянное" уличное освещение (Уличные фонари по углам)
+            // Вместо жестких кругов используем слоистые градиенты для эффекта дымки
+            const lights = [ [310, 310], [490, 310], [310, 490], [490, 490] ];
+            lights.forEach(pos => {
+                // Основной рассеянный объемный свет (большой, очень тусклый)
+                const g_outer = ctx.createRadialGradient(pos[0], pos[1], 10, pos[0], pos[1], 190);
+                g_outer.addColorStop(0, 'rgba(255, 200, 100, 0.05)'); 
+                g_outer.addColorStop(1, 'transparent');
+                ctx.fillStyle = g_outer; ctx.beginPath(); ctx.arc(pos[0], pos[1], 190, 0, Math.PI*2); ctx.fill();
 
-            const sc = Math.floor(camera.x / GRID_SIZE) - 1;
-            const ec = Math.ceil((camera.x + width/scale) / GRID_SIZE) + 1;
-            const sr = Math.floor(camera.y / GRID_SIZE) - 1;
-            const er = Math.ceil((camera.y + height/scale) / GRID_SIZE) + 1;
+                // Ядро теплого света (меньше, ярче)
+                const g_inner = ctx.createRadialGradient(pos[0], pos[1], 0, pos[0], pos[1], 70);
+                g_inner.addColorStop(0, 'rgba(255, 190, 110, 0.15)'); 
+                g_inner.addColorStop(1, 'transparent');
+                ctx.fillStyle = g_inner; ctx.beginPath(); ctx.arc(pos[0], pos[1], 70, 0, Math.PI*2); ctx.fill();
 
-            // 1. ДОРОГИ И РАЗМЕТКА
-            for(let c=sc; c<=ec; c++) {
-                for(let r=sr; r<=er; r++) {
-                    const x = (c*GRID_SIZE-camera.x)*scale, y = (r*GRID_SIZE-camera.y)*scale, s = GRID_SIZE*scale;
-                    const rw = s*0.38;
-                    
-                    ctx.fillStyle = '#1a1a20';
-                    ctx.fillRect(x + (s-rw)/2, y, rw, s);
-                    ctx.fillRect(x, y + (s-rw)/2, s, rw);
-                    
-                    // Разметка (пунктир)
-                    ctx.strokeStyle = 'rgba(255,255,255,0.15)';
-                    ctx.setLineDash([10*scale, 20*scale]);
-                    ctx.beginPath();
-                    ctx.moveTo(x + s/2, y); ctx.lineTo(x + s/2, y + s);
-                    ctx.moveTo(x, y + s/2); ctx.lineTo(x + s, y + s/2);
-                    ctx.stroke();
-                }
-            }
-
-            // 2. ЗДАНИЯ С ОКНАМИ
-            for(let c=sc; c<=ec; c++) {
-                for(let r=sr; r<=er; r++) {
-                    const x = (c*GRID_SIZE-camera.x)*scale, y = (r*GRID_SIZE-camera.y)*scale, s = GRID_SIZE*scale;
-                    if(sRand(c, r) > 0.3) {
-                        ctx.fillStyle = '#0d0d12';
-                        const bS = s*0.28;
-                        const bx = x+5*scale, by = y+5*scale;
-                        ctx.fillRect(bx, by, bS, bS);
-                        
-                        // Окна
-                        ctx.fillStyle = sRand(c,r) > 0.5 ? '#f1c40f' : '#3498db';
-                        for(let i=0; i<3; i++) {
-                            for(let j=0; j<3; j++) {
-                                if(sRand(c+i, r+j) > 0.6) 
-                                    ctx.fillRect(bx+10*scale+i*20*scale, by+10*scale+j*20*scale, 8*scale, 8*scale);
-                            }
-                        }
-                    }
-                    // Спавн
-                    const vis = c >= sc+1 && c < ec && r >= sr+1 && r < er;
-                    if(!vis && Math.random() < 0.02 && cars.length < 80) cars.push(new Car(c, r, Math.floor(Math.random()*4)));
-                }
-            }
-
-            // 3. МАШИНЫ
-            cars.forEach(car => { car.update(cars); car.draw(); });
-            cars = cars.filter(c => Math.hypot(c.getGX()-(camera.x+width/scale/2), c.getGY()-(camera.y+height/scale/2)) < 1500);
-
-            requestAnimationFrame(loop);
+                // Точка фонаря (очень яркая в центре)
+                ctx.fillStyle = '#ffe0aa'; 
+                ctx.beginPath(); ctx.arc(pos[0], pos[1], 5, 0, Math.PI*2); ctx.fill();
+            });
         }
 
-        // Инпут (Drag & Zoom)
-        let isD = false, lx, ly;
-        canvas.onmousedown = e => { isD = true; lx = e.clientX; ly = e.clientY; };
-        window.onmousemove = e => { if(isD) { camera.x -= (e.clientX-lx)/scale; camera.y -= (e.clientY-ly)/scale; lx = e.clientX; ly = e.clientY; }};
-        window.onmouseup = () => isD = false;
-        canvas.onwheel = e => {
-            const os = scale; scale = Math.max(0.4, Math.min(2.5, scale - e.deltaY*0.001));
-            camera.x += (e.clientX/os) - (e.clientX/scale); camera.y += (e.clientY/os) - (e.clientY/scale);
-        };
-        
-        // Тач
-        canvas.ontouchstart = e => { isD = true; lx = e.touches[0].clientX; ly = e.touches[0].clientY; };
-        canvas.ontouchmove = e => { if(isD) { camera.x -= (e.touches[0].clientX-lx)/scale; camera.y -= (e.touches[0].clientY-ly)/scale; lx = e.touches[0].clientX; ly = e.touches[0].clientY; }};
-        canvas.ontouchend = () => isD = false;
-
+        function loop() {
+            // Уменьшенный шанс спавна для предотвращения забивания перекрестка
+            if(Math.random()<SPAWN_CHANCE) {
+                const lane = Math.floor(Math.random()*4);
+                // Проверка: не спавнить, если в этой полосе уже стоит машина в очереди
+                const isBlocked = cars.some(c => c.lane === lane && (c.x < 50 || c.x > 750 || c.y < 50 || c.y > 750));
+                if (!isBlocked) cars.push(new Car(lane));
+            }
+            
+            drawScene(); // Рисуем сцену и освещение ПЕРЕД машинами
+            
+            // Удаляем машины, которые уехали далеко за границы (ФИКС спавна)
+            cars = cars.filter(c => c.x>-250 && c.x<1050 && c.y>-250 && c.y<1050);
+            
+            cars.forEach(c => { c.update(cars); c.draw(); });
+            
+            explosions.forEach((e,i) => { ctx.font='35px Arial'; ctx.fillText('💥',e.x-18,e.y+12); if(--e.life<=0) explosions.splice(i,1); });
+            requestAnimationFrame(loop);
+        }
         loop();
     </script>
 </body>
