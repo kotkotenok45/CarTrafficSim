@@ -3,24 +3,24 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
-    <title>Infinite Smart Traffic</title>
+    <title>Neon City Traffic</title>
     <style>
-        body, html { margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden; background-color: #050505; font-family: sans-serif; }
+        body, html { margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden; background-color: #0a0a0c; font-family: 'Segoe UI', sans-serif; }
         canvas { display: block; touch-action: none; }
-        #ui { position: absolute; top: 20px; left: 20px; color: #eee; pointer-events: none; background: rgba(0,0,0,0.7); padding: 12px; border-radius: 10px; border: 1px solid #333; }
+        #ui { position: absolute; top: 20px; left: 20px; color: #00ffcc; pointer-events: none; background: rgba(10,10,15,0.8); padding: 15px; border-radius: 8px; border: 1px solid #00ffcc; box-shadow: 0 0 10px rgba(0,255,204,0.3); }
     </style>
 </head>
 <body>
-    <div id="ui"><b>Smart AI Traffic</b><br>Без светофоров. Обзор 270°.</div>
+    <div id="ui"><b>Neon City AI</b><br>Разметка, окна и умный разъезд</div>
     <canvas id="simCanvas"></canvas>
 
     <script>
         const canvas = document.getElementById('simCanvas');
         const ctx = canvas.getContext('2d');
         const GRID_SIZE = 400;
-        const CAR_W = 20, CAR_L = 42;
+        const CAR_W = 18, CAR_L = 38;
         
-        let width, height, scale = 0.8, camera = { x: 0, y: 0 };
+        let width, height, scale = 1.0, camera = { x: 0, y: 0 };
         let cars = [];
 
         function resize() {
@@ -38,11 +38,12 @@
         class Car {
             constructor(c, r, lane) {
                 this.c = c; this.r = r; this.lane = lane;
-                this.color = `hsl(${sRand(c, r + lane) * 360}, 70%, 50%)`;
-                this.speed = 2 + sRand(c, r) * 2;
+                // Яркие неоновые цвета
+                this.color = `hsl(${sRand(c, r + lane) * 360}, 80%, 60%)`;
+                this.speed = 1.5 + sRand(c, r) * 2;
                 this.angle = [Math.PI/2, Math.PI, -Math.PI/2, 0][lane];
                 this.braking = false;
-                const off = 32;
+                const off = 35;
                 this.lx = [200-off, 400, 200+off, 0][lane];
                 this.ly = [0, 200-off, 400, 200+off][lane];
             }
@@ -53,46 +54,39 @@
             update(all) {
                 let dMin = Infinity;
                 const gx = this.getGX(), gy = this.getGY();
-                this.braking = false;
-
+                
                 all.forEach(o => {
                     if(o === this) return;
                     const dx = o.getGX() - gx, dy = o.getGY() - gy;
                     const d = Math.hypot(dx, dy);
-
-                    if (d < 130) {
-                        // Вычисляем угол до другой машины относительно нашего направления
+                    
+                    if (d < 150) {
                         const angleToOther = Math.atan2(dy, dx);
                         let diff = angleToOther - this.angle;
-                        // Нормализация угла
                         while (diff < -Math.PI) diff += Math.PI * 2;
                         while (diff > Math.PI) diff -= Math.PI * 2;
 
-                        // Зрение: видим всё, кроме сектора сзади (от -135 до +135 градусов)
-                        // То есть игнорируем только то, что сзади в радиусе 90 градусов.
-                        if (Math.abs(diff) < Math.PI * 0.75) {
-                            // Если машина очень близко впереди или сбоку — тормозим
+                        if (Math.abs(diff) < Math.PI * 0.6) { // Зрение 215 градусов
                             if (d < dMin) dMin = d;
                         }
                     }
                 });
 
-                // Логика поведения
-                if (dMin < 65) {
+                // Более жесткое торможение для предотвращения коллизий
+                if (dMin < 55) {
                     this.braking = true;
-                    this.speed = Math.max(0, this.speed - 0.4);
-                } else if (dMin < 110) {
+                    this.speed = 0; // Полная остановка
+                } else if (dMin < 120) {
                     this.braking = true;
-                    this.speed = Math.max(1, this.speed - 0.15);
+                    this.speed = Math.max(0.5, this.speed - 0.3);
                 } else {
-                    this.speed = Math.min(4, this.speed + 0.1);
+                    this.braking = false;
+                    this.speed = Math.min(3.5, this.speed + 0.1);
                 }
 
-                // Движение
                 this.lx += Math.cos(this.angle) * this.speed;
                 this.ly += Math.sin(this.angle) * this.speed;
 
-                // Бесконечный мир
                 if(this.lx >= GRID_SIZE) { this.lx = 0; this.c++; }
                 if(this.lx < 0) { this.lx = GRID_SIZE; this.c--; }
                 if(this.ly >= GRID_SIZE) { this.ly = 0; this.r++; }
@@ -108,31 +102,33 @@
                 ctx.translate(sx, sy);
                 ctx.rotate(this.angle);
 
-                // Свет фар (сделаем пошире, раз они всё видят)
-                const g = ctx.createLinearGradient(15*scale, 0, 90*scale, 0);
-                g.addColorStop(0, 'rgba(255,255,200,0.2)'); g.addColorStop(1, 'transparent');
+                // Свет фар
+                const g = ctx.createLinearGradient(10*scale, 0, 100*scale, 0);
+                g.addColorStop(0, 'rgba(0, 255, 255, 0.3)');
+                g.addColorStop(1, 'transparent');
                 ctx.fillStyle = g;
                 ctx.beginPath();
-                ctx.moveTo(10*scale, -10*scale); ctx.lineTo(90*scale, -40*scale);
-                ctx.lineTo(90*scale, 40*scale); ctx.lineTo(10*scale, 10*scale);
+                ctx.moveTo(10*scale, -8*scale); ctx.lineTo(100*scale, -35*scale);
+                ctx.lineTo(100*scale, 35*scale); ctx.lineTo(10*scale, 8*scale);
                 ctx.fill();
 
                 // Корпус
                 ctx.fillStyle = this.color;
+                ctx.shadowBlur = 5 * scale; ctx.shadowColor = this.color;
                 ctx.fillRect(-CAR_L/2*scale, -CAR_W/2*scale, CAR_L*scale, CAR_W*scale);
                 
-                // Стоп-сигналы
+                // Стопы
                 if(this.braking) {
-                    ctx.fillStyle = '#f00';
-                    ctx.shadowBlur = 10 * scale; ctx.shadowColor = '#f00';
-                    ctx.fillRect(-CAR_L/2*scale, -CAR_W/2*scale, 3*scale, CAR_W*scale);
+                    ctx.fillStyle = '#ff0055';
+                    ctx.shadowBlur = 15 * scale; ctx.shadowColor = '#ff0055';
+                    ctx.fillRect(-CAR_L/2*scale, -CAR_W/2*scale, 4*scale, CAR_W*scale);
                 }
                 ctx.restore();
             }
         }
 
         function loop() {
-            ctx.fillStyle = '#070707';
+            ctx.fillStyle = '#08080a';
             ctx.fillRect(0, 0, width, height);
 
             const sc = Math.floor(camera.x / GRID_SIZE) - 1;
@@ -140,44 +136,54 @@
             const sr = Math.floor(camera.y / GRID_SIZE) - 1;
             const er = Math.ceil((camera.y + height/scale) / GRID_SIZE) + 1;
 
-            // 1. Дороги
-            ctx.fillStyle = '#111';
+            // 1. ДОРОГИ И РАЗМЕТКА
             for(let c=sc; c<=ec; c++) {
                 for(let r=sr; r<=er; r++) {
                     const x = (c*GRID_SIZE-camera.x)*scale, y = (r*GRID_SIZE-camera.y)*scale, s = GRID_SIZE*scale;
-                    const rw = s*0.36;
+                    const rw = s*0.38;
+                    
+                    ctx.fillStyle = '#1a1a20';
                     ctx.fillRect(x + (s-rw)/2, y, rw, s);
                     ctx.fillRect(x, y + (s-rw)/2, s, rw);
-                    // Центр перекрестка
-                    ctx.fillRect(x + (s-rw)/2, y + (s-rw)/2, rw, rw);
+                    
+                    // Разметка (пунктир)
+                    ctx.strokeStyle = 'rgba(255,255,255,0.15)';
+                    ctx.setLineDash([10*scale, 20*scale]);
+                    ctx.beginPath();
+                    ctx.moveTo(x + s/2, y); ctx.lineTo(x + s/2, y + s);
+                    ctx.moveTo(x, y + s/2); ctx.lineTo(x + s, y + s/2);
+                    ctx.stroke();
                 }
             }
 
-            // 2. Здания
-            ctx.fillStyle = '#0a0a0a';
+            // 2. ЗДАНИЯ С ОКНАМИ
             for(let c=sc; c<=ec; c++) {
                 for(let r=sr; r<=er; r++) {
                     const x = (c*GRID_SIZE-camera.x)*scale, y = (r*GRID_SIZE-camera.y)*scale, s = GRID_SIZE*scale;
-                    if(sRand(c, r) > 0.4) {
-                        ctx.fillRect(x+20*scale, y+20*scale, s*0.2, s*0.2);
-                        ctx.fillRect(x+s*0.75, y+s*0.75, s*0.2, s*0.2);
+                    if(sRand(c, r) > 0.3) {
+                        ctx.fillStyle = '#0d0d12';
+                        const bS = s*0.28;
+                        const bx = x+5*scale, by = y+5*scale;
+                        ctx.fillRect(bx, by, bS, bS);
+                        
+                        // Окна
+                        ctx.fillStyle = sRand(c,r) > 0.5 ? '#f1c40f' : '#3498db';
+                        for(let i=0; i<3; i++) {
+                            for(let j=0; j<3; j++) {
+                                if(sRand(c+i, r+j) > 0.6) 
+                                    ctx.fillRect(bx+10*scale+i*20*scale, by+10*scale+j*20*scale, 8*scale, 8*scale);
+                            }
+                        }
                     }
-                    // Спавн только за кадром
+                    // Спавн
                     const vis = c >= sc+1 && c < ec && r >= sr+1 && r < er;
-                    if(!vis && Math.random() < 0.008 && cars.length < 100) cars.push(new Car(c, r, Math.floor(Math.random()*4)));
+                    if(!vis && Math.random() < 0.02 && cars.length < 80) cars.push(new Car(c, r, Math.floor(Math.random()*4)));
                 }
             }
 
-            // 3. Машины
+            // 3. МАШИНЫ
             cars.forEach(car => { car.update(cars); car.draw(); });
-            
-            // Удаление далеких машин
-            if(cars.length > 150) {
-                cars = cars.filter(c => {
-                    const dist = Math.hypot(c.getGX() - (camera.x + width/scale/2), c.getGY() - (camera.y + height/scale/2));
-                    return dist < 1500;
-                });
-            }
+            cars = cars.filter(c => Math.hypot(c.getGX()-(camera.x+width/scale/2), c.getGY()-(camera.y+height/scale/2)) < 1500);
 
             requestAnimationFrame(loop);
         }
@@ -187,12 +193,11 @@
         canvas.onmousedown = e => { isD = true; lx = e.clientX; ly = e.clientY; };
         window.onmousemove = e => { if(isD) { camera.x -= (e.clientX-lx)/scale; camera.y -= (e.clientY-ly)/scale; lx = e.clientX; ly = e.clientY; }};
         window.onmouseup = () => isD = false;
-        
         canvas.onwheel = e => {
-            const os = scale; scale = Math.max(0.2, Math.min(2.5, scale - e.deltaY*0.001));
+            const os = scale; scale = Math.max(0.4, Math.min(2.5, scale - e.deltaY*0.001));
             camera.x += (e.clientX/os) - (e.clientX/scale); camera.y += (e.clientY/os) - (e.clientY/scale);
         };
-
+        
         // Тач
         canvas.ontouchstart = e => { isD = true; lx = e.touches[0].clientX; ly = e.touches[0].clientY; };
         canvas.ontouchmove = e => { if(isD) { camera.x -= (e.touches[0].clientX-lx)/scale; camera.y -= (e.touches[0].clientY-ly)/scale; lx = e.touches[0].clientX; ly = e.touches[0].clientY; }};
