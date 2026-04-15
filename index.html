@@ -39,15 +39,31 @@
         const VIEW_MARGIN = 60; // Расстояние от края холста до точки спавна
 
         let deferredPrompt;
+
+// 1. Ловим событие
 window.addEventListener('beforeinstallprompt', (e) => {
     e.preventDefault();
     deferredPrompt = e;
-    
-    // Если пришли из магазина — сразу показываем окно!
-    if (new URLSearchParams(window.location.search).get('install') === 'true') {
-        if (deferredPrompt) deferredPrompt.prompt();
+    console.log("CitySim готов к установке скриптом");
+
+    // 2. Проверяем, пришли ли мы из магазина
+    const params = new URLSearchParams(window.location.search);
+    if (params.get('install') === 'true') {
+        
+        // Вместо автоматического вызова, вешаем установку на ПЕРВЫЙ КЛИК по экрану
+        // Пользователь нажмет куда угодно (или на кнопку игры), и вылетит окно Chrome
+        document.body.addEventListener('click', () => {
+            if (deferredPrompt) {
+                deferredPrompt.prompt();
+                deferredPrompt = null;
+            }
+        }, { once: true }); // Сработает только один раз
+
+        // Можно вывести маленькую подсказку сверху (опционально)
+        console.log("Нажмите в любом месте для установки");
     }
 });
+        
         
         let cars = [], explosions = [];
 
